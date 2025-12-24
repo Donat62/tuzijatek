@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tűzijáték – Teljes Rendszer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background:#0f172a; color:#e5e7eb; padding:20px; }
+h1,h2,h3 { color:#facc15; }
+.container { max-width:1200px; margin:auto; }
+.card { background:#020617; padding:20px; border-radius:12px; margin-bottom:20px; }
+table { width:100%; border-collapse:collapse; }
+th,td { padding:8px; border-bottom:1px solid #1e293b; text-align:center; }
+input,select { padding:6px; border-radius:6px; border:none; }
+input { width:110px; }
+select { width:55px; }
+button { background:#facc15; border:none; padding:6px 12px; border-radius:8px; font-weight:bold; cursor:pointer; }
+button:hover { background:#fde047; }
+.hidden { display:none; }
+</style>
+</head>
+
+<body>
+<div class="container">
+<h1>🎆 Tűzijáték Értékesítési Rendszer</h1>
+
+<div>
+<button onclick="showTab('products')">📦 Termékek</button>
+<button onclick="showTab('cart')">🛒 Kosár</button>
+<button onclick="showTab('history')">📜 Előzmények</button>
+<button onclick="showTab('summary')">📊 Napi zárás</button>
+</div>
+
+<div id="products" class="card">
+<h2>📦 Termékek</h2>
+<input id="search" placeholder="🔍 Keresés név / sorszám" oninput="renderProducts()"><br><br>
+<table id="productTable"></table><br>
+<input id="newSerial" placeholder="Sorszám">
+<input id="newName" placeholder="Név">
+<input id="newStock" type="number" placeholder="Készlet">
+<input id="newPrice" type="number" placeholder="Ár">
+<button onclick="addProduct()">➕</button>
+</div>
+
+<div id="cart" class="card hidden">
+<h2>🛒 Kosár</h2>
+<table id="cartTable"></table>
+<h3>Összesen: <span id="total">0</span> Ft</h3>
+<button onclick="checkout()">✔ Vásárlás véglegesítése</button>
+</div>
+
+<div id="history" class="card hidden">
+<h2>📜 Előzmények</h2>
+<table id="historyTable"></table>
+</div>
+
+<div id="summary" class="card hidden">
+<h2>📊 Napi zárás</h2>
+<p>Dátum: <span id="today"></span></p>
+<p>Napi bevétel: <span id="dailyTotal">0</span> Ft</p>
+<table id="stockSummary"></table><br>
+<button onclick="endOfDay()">🛑 Nap vége</button>
+</div>
+
+<script>
+let products = JSON.parse(localStorage.getItem("products")) || [];
+let history = JSON.parse(localStorage.getItem("history")) || [];
+let cart = [];
+let stockLog = JSON.parse(localStorage.getItem("stockLog")) || [];
+
+function saveAll(){
+ localStorage.setItem("products",JSON.stringify(products));
+ localStorage.setItem("history",JSON.stringify(history));
+ localStorage.setItem("stockLog",JSON.stringify(stockLog));
+}
+
+function showTab(id){
+ ["products","cart","history","summary"].forEach(t=>document.getElementById(t).classList.add("hidden"));
+ document.getElementById(id).classList.remove("hidden");
+ if(id==="history") renderHistory();
+ if(id==="summary") renderSummary();
+}
+
+function addProduct(){
+ if(!newSerial.value||!newName.value) return alert("Hiányzó adat!");
+ products.push({
+   serial:newSerial.value,
+   name:newName.value,
+   stock:+newStock.value,
+   price:+newPrice.value
+ });
+ newSerial.value=newName.value=newStock.value=newPrice.value="";
+ saveAll(); renderProducts(); renderSummary();
+}
+
+function deleteProduct(i){
+ if(!confirm("Törlöd a terméket?")) return;
+ products.splice(i,1);
+ saveAll(); renderProducts(); renderSummary();
+}
+
+function renderProducts(){
+ let q=search.value.toLowerCase();
+ productTable.innerHTML=
+ "<tr><th>Sorszám</th><th>Név</th><th>Készlet</th><th>Ár</th><th>Menny</th><th>Kosár</th><th>Készlet módosítás</th><th>Ár szerkesztés</th><th></th></tr>";
+ products.filter(p=>p.name.toLowerCase().includes(q)||p.serial.toLowerCase().includes(q))
+ .forEach((p,i)=>{
+   productTable.innerHTML+=`
+<tr>
+<td>${p.serial}</td>
+<td>${p.name}</td>
+<td>${p.stock}</td>
+<td>${p.price}</td>
+<td><input id="q${i}" type="number" min="1"></td>
+<td><button onclick="addToCart(${i})">🛒</button></td>
+<td>
+  <select id="op${i}">
+    <option value="+">+</option>
+    <option value="-">-</option>
+  </select>
+  <input id="chg${i}" type="number" min="1" style="width:70px">
+  <button onclick="applyStockChange(${i})">✔</button>
+</td>
+<td>
+  <input id="price${i}" type="number" min="0" style="width:80px" placeholder="Új ár">
+  <button onclick="editPrice(${i})">💰</button>
+</td>
+<td><button onclick="deleteProduct(${i})">🗑</button></td>
+</tr>`; 
+ });
+}
+
+function editPrice(i){
+ let val = parseInt(document.getElementById("price"+i).value);
+ if(isNaN(val) || val < 0) return alert("Adj meg érvényes árat!");
+ products[i].price = val;
+ document.getElementById("price"+i).value="";
+ saveAll(); renderProducts(); renderSummary();
+}
+
+function applyStockChange(i){
+ let op = document.getElementById("op"+i).value;
+ let val = parseInt(document.getElementById("chg"+i).value);
+ if(isNaN(val) || val <= 0) return alert("Adj meg érvényes mennyiséget!");
+ let change = op === "+" ? val : -val;
+ let newStock = products[i].stock + change;
+ if(newStock < 0) return alert("A készlet nem lehet negatív!");
+ products[i].stock = newStock;
+ stockLog.push({
+   date: new Date().toLocaleString(),
+   name: products[i].name,
+   change: change,
+   type: change > 0 ? "Pótlás" : "Kivitel"
+ });
+ document.getElementById("chg"+i).value = "";
+ saveAll(); renderProducts(); renderSummary();
+}
+
+function addToCart(i){
+ let q=+document.getElementById("q"+i).value;
+ if(!q||q>products[i].stock) return alert("Nincs ennyi készleten");
+ cart.push({productIndex:i,name:products[i].name,qty:q,price:products[i].price});
+ document.getElementById("q"+i).value="";
+ renderCart();
+}
+
+function deleteCartItem(i){ cart.splice(i,1); renderCart(); }
+
+function renderCart(){
+ let sum=0;
+ cartTable.innerHTML="<tr><th>Termék</th><th>Menny</th><th>Összeg</th><th></th></tr>";
+ cart.forEach((c,i)=>{
+   let s=c.qty*c.price; sum+=s;
+   cartTable.innerHTML+=
+   `<tr><td>${c.name}</td><td>${c.qty}</td><td>${s} Ft</td><td><button onclick="deleteCartItem(${i})">🗑</button></td></tr>`;
+ });
+ total.innerText=sum;
+}
+
+function checkout(){
+ if(!cart.length) return;
+ cart.forEach(c=>products[c.productIndex].stock-=c.qty);
+ history.push({date:new Date().toLocaleString(),items:[...cart],total:+total.innerText});
+ cart=[]; saveAll();
+ renderProducts(); renderCart(); renderHistory(); renderSummary();
+ alert("Vásárlás rögzítve");
+}
+
+function deleteHistory(i){
+ if(!confirm("Törlöd az eladást?")) return;
+ history.splice(i,1); saveAll(); renderHistory(); renderSummary();
+}
+
+function renderHistory(){
+ historyTable.innerHTML="<tr><th>Dátum</th><th>Tételek</th><th>Összeg</th><th></th></tr>";
+ history.forEach((h,i)=>{
+   historyTable.innerHTML+=
+   `<tr><td>${h.date}</td><td>${h.items.map(x=>`${x.name} (${x.qty})`).join(", ")}</td><td>${h.total} Ft</td>
+   <td><button onclick="deleteHistory(${i})">🗑</button></td></tr>`;
+ });
+}
+
+function renderSummary(){
+ let sold={},sum=0;
+ history.forEach(h=>{
+   sum+=h.total;
+   h.items.forEach(i=>sold[i.name]=(sold[i.name]||0)+i.qty);
+ });
+ dailyTotal.innerText=sum;
+ today.innerText=new Date().toLocaleDateString();
+ stockSummary.innerHTML="<tr><th>Termék</th><th>Eladva</th><th>Maradt</th></tr>";
+ products.forEach(p=>{
+   stockSummary.innerHTML+=`<tr><td>${p.name}</td><td>${sold[p.name]||0}</td><td>${p.stock}</td></tr>`;
+ });
+}
+
+function endOfDay(){
+ if(!history.length) return alert("Nincs mit lezárni!");
+ const todayHistory = [...history]; 
+ generateDailyPDF(todayHistory);
+ history=[]; cart=[]; saveAll();
+ renderCart(); renderHistory(); renderSummary();
+ alert("Nap lezárva, PDF letöltve!");
+}
+
+function generateDailyPDF(todayHistory){
+ const { jsPDF } = window.jspdf;
+ const doc = new jsPDF();
+
+ doc.setFontSize(18);
+ doc.setTextColor(250,204,21);
+ doc.text("NAPI ZÁRÁS JELENTÉS",105,15,null,null,"center");
+
+ const totalRevenue = todayHistory.reduce((a,b)=>a+b.total,0);
+ doc.setFontSize(11);
+ doc.setTextColor(0);
+ doc.text(`Dátum: ${new Date().toLocaleDateString()}`,14,25);
+ doc.text(`Napi bevétel összesen: ${totalRevenue} Ft`,14,32);
+
+ let y = 40;
+
+ // ===== ELADÁSOK =====
+ if(todayHistory.length){
+   let rows = [];
+   todayHistory.forEach(h=>{
+     h.items.forEach(i=>{
+       rows.push([h.date,i.name,i.qty,i.qty*i.price]);
+     });
+   });
+   doc.autoTable({
+     head:[["Időpont","Termék","Mennyiség","Összeg"]],
+     body:rows,
+     startY:y,
+     headStyles:{fillColor:[250,204,21],textColor:0},
+     alternateRowStyles:{fillColor:[245,245,245],textColor:0},
+     theme:'grid'
+   });
+   y = doc.lastAutoTable.finalY + 10;
+ }
+
+ // ===== KÉSZLETMÓDOSÍTÁS =====
+ const today = new Date().toLocaleDateString();
+ const todayStockLog = stockLog.filter(l=>l.date.startsWith(today));
+ if(todayStockLog.length){
+   let rows = todayStockLog.map(l=>[l.date,l.name,l.type,Math.abs(l.change)]);
+   doc.autoTable({
+     head:[["Időpont","Termék","Típus","Mennyiség"]],
+     body:rows,
+     startY:y,
+     headStyles:{fillColor:[250,204,21],textColor:0},
+     alternateRowStyles:{fillColor:[245,245,245],textColor:0},
+     theme:'grid'
+   });
+   y = doc.lastAutoTable.finalY + 10;
+ }
+
+ // ===== ZÁRÓ KÉSZLET =====
+ let rows = products.map(p=>{
+   const sold = todayHistory.reduce((sum,h)=>{
+     const item=h.items.find(it=>it.name===p.name);
+     return sum + (item ? item.qty :0);
+   },0);
+   return [p.name,sold,p.stock];
+ });
+
+ doc.autoTable({
+   head:[["Termék","Eladva","Maradt"]],
+   body:rows,
+   startY:y,
+   headStyles:{fillColor:[250,204,21],textColor:0},
+   alternateRowStyles:{fillColor:[245,245,245],textColor:0},
+   theme:'grid'
+ });
+
+ doc.save(`napi_zaras_${new Date().toLocaleDateString().replaceAll('.','_')}.pdf`);
+}
+
+
+renderProducts(); renderHistory(); renderSummary();
+</script>
+</body>
+</html>
